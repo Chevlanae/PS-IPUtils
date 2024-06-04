@@ -31,7 +31,7 @@ namespace IPUtils
         {
             topEnd = topE;
             lowEnd = lowE;
-            IPs = new string[topEnd[3]];
+            IPs = new string[topEnd[4]];
         }
 
         public void Gen()
