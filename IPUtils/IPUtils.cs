@@ -5,43 +5,73 @@ using System.Management.Automation;
 
 namespace IPUtils
 {
-    //Instance class for generating a /24 block of IP addresses
-    //Used for multithreading in the NewIPRange class
-    public class IP24Block
+    //Instance class for generating a block of IP addresses
+    //Used for multithreading in NewIPRange
+    public class IPBlock
     {
         //Array of length 4, represents the block's largest possible IP address.
-        public int[] TopEnd
-        {
-            get { return topEnd; }
-            set { topEnd = value; }
-        }
-        private int[] topEnd;
+        public int[] TopEnd;
 
-        //Array of length for
-        public int[] LowEnd
-        {
-            get { return lowEnd; }
-            set { lowEnd = value; }
-        }
-        private int[] lowEnd;
+        //Array of length 4, represents the block's smallest possible IP address.
+        public int[] LowEnd;
 
         public string[] IPs;
 
-        public IP24Block(int[] topE, int[] lowE)
+        public virtual void Gen() { }
+    }
+
+    public class IPBlock24 : IPBlock
+    {
+        public IPBlock24(int[] topE, int[] lowE)
         {
-            topEnd = topE;
-            lowEnd = lowE;
-            IPs = new string[topEnd[3]];
+            TopEnd = topE;
+            LowEnd = lowE;
+            IPs = new string[topE[3] + 1];
         }
 
-        public void Gen()
+        public override void Gen()
         {
-            foreach (int b4 in Enumerable.Range(1, topEnd[3]))
+            foreach (int b4 in Enumerable.Range(0, TopEnd[3] + 1))
             {
-                IPs[b4 - 1] = (lowEnd[0] + topEnd[0]) + "." + (lowEnd[1] + topEnd[1]) + "." + (lowEnd[2] + topEnd[2]) + "." + (lowEnd[3] + b4);
+                IPs[b4] = (LowEnd[0] + TopEnd[0]) + "." + (LowEnd[1] + TopEnd[1]) + "." + (LowEnd[2] + TopEnd[2]) + "." + (LowEnd[3] + b4);
             }
         }
     }
+
+    public class IPBlock16 : IPBlock 
+    {
+        public IPBlock16(int[] topE, int[] lowE)
+        {
+            TopEnd = topE;
+            LowEnd = lowE;
+            IPs = new string[topE[2] * 255];
+        }
+
+        public override void Gen()
+        {
+            foreach (int b3 in Enumerable.Range(0, TopEnd[2] + 1))
+            {
+                int[] bytes = new int[4];
+                bytes[0] = TopEnd[0];
+                bytes[1] = TopEnd[1];
+                bytes[2] = b3;
+                bytes[3] = 255;
+
+                IPBlock24 block24 = new IPBlock24(bytes, LowEnd);
+
+                block24.Gen();
+
+                int i = 0;
+                foreach (string ip in block24.IPs)
+                {
+                    IPs[i + (b3 * 255)] = ip;
+                    i++;
+                }
+            }
+        }
+    }
+    public class IPBlock8 : IPBlock { }
+    public class IPBlock2 : IPBlock { }
 
     public static class Regex
     {
@@ -79,12 +109,12 @@ namespace IPUtils
         private bool threading;
 
 
-        public Tuple<IP24Block, Thread>[] IPBlocks
+        public Tuple<IPBlock24, Thread>[] IPBlocks
         {
             get { return ipBlocks; }
             set { ipBlocks = value; }
         }
-        private Tuple<IP24Block, Thread>[] ipBlocks;
+        private Tuple<IPBlock24, Thread>[] ipBlocks;
 
 
         //Main
@@ -125,15 +155,15 @@ namespace IPUtils
             {
 
                 //Calculate total amount of IP blocks needed
-                //(approx. total amount of IPs divided by 255)
+                //(total amount of IPs divided by 255)
                 //Always 1 block if total amount of IPs is less than 255
                 int blockCount = 1;
-                blockCount *= indexMask[0] != 0 ? indexMask[0] + 1 : 1;
-                blockCount *= indexMask[1] != 0 ? indexMask[1] + 1 : 1;
-                blockCount *= indexMask[2] != 0 ? indexMask[2] + 1 : 1;
+                blockCount *= indexMask[0] + 1;
+                blockCount *= indexMask[1] + 1;
+                blockCount *= indexMask[2] + 1;
 
                 //Init block array
-                IPBlocks = new Tuple<IP24Block, Thread>[blockCount];
+                IPBlocks = new Tuple<IPBlock24, Thread>[blockCount];
 
                 //Generate threads
                 int i = 0;
@@ -143,14 +173,14 @@ namespace IPUtils
                     {
                         foreach (int b3 in Enumerable.Range(0, indexMask[2] + 1))
                         {
-                            //Set block info
-                            int[] topEnd = new int[3];
-                            topEnd[0] = b1;
-                            topEnd[1] = b2;
-                            topEnd[2] = b3;
-                            topEnd[3] = indexMask[3];
+                            int[] bytes = new int[4];
+                            bytes[0] = b1;
+                            bytes[1] = b2;
+                            bytes[2] = b3;
+                            bytes[3] = indexMask[3];
 
-                            IP24Block ipBlock = new IP24Block(topEnd, lowEnd);
+                            //Set block info
+                            IPBlock24 ipBlock = new IPBlock24(bytes, lowEnd);
                             
                             //Pass block method to thread
                             Thread threadCaller = new Thread(new ThreadStart(ipBlock.Gen));
@@ -159,7 +189,7 @@ namespace IPUtils
                             threadCaller.Start();
 
                             //Assign block and thread to block array
-                            IPBlocks[i] = new Tuple<IP24Block, Thread>(ipBlock, threadCaller);
+                            IPBlocks[i] = new Tuple<IPBlock24, Thread>(ipBlock, threadCaller);
 
                             i++;
                         }
@@ -167,7 +197,7 @@ namespace IPUtils
                 }
 
                 //Wait for threads and write the received data
-                foreach (Tuple<IP24Block, Thread> block in IPBlocks)
+                foreach (Tuple<IPBlock24, Thread> block in IPBlocks)
                 {
                     block.Item2.Join();
 
@@ -177,7 +207,9 @@ namespace IPUtils
                     }
                 }
             } 
+
             else 
+            
             {
                 //Generate IPs
                 foreach (int b1 in Enumerable.Range(0, indexMask[0] + 1))
@@ -186,7 +218,7 @@ namespace IPUtils
                     {
                         foreach (int b3 in Enumerable.Range(0, indexMask[2] + 1))
                         {
-                            foreach (int b4 in Enumerable.Range(1, indexMask[3]))
+                            foreach (int b4 in Enumerable.Range(0, indexMask[3] + 1))
                             {
                                 WriteObject((lowEnd[0] + b1) + "." + (lowEnd[1] + b2) + "." + (lowEnd[2] + b3) + "." + (lowEnd[3] + b4));
                             }
@@ -195,12 +227,17 @@ namespace IPUtils
                 }
             }
         }
+
+        protected override void EndProcessing()
+        {
+            System.GC.Collect();
+        }
     }
 
-    [Cmdlet(VerbsData.Convert, "SubnetMask")]
-    public class ConvertSubnetMask : Cmdlet
+    [Cmdlet(VerbsCommon.Get, "Prefix")]
+    public class GetPrefix : Cmdlet
     {
-        [Parameter(Position = 0, Mandatory = true)]
+        [Parameter()]
         [ValidatePattern(Regex.SubnetMask)]
         public string SubnetMask
         {
@@ -209,34 +246,7 @@ namespace IPUtils
         }
         private string subnetMask = "0.0.0.0";
 
-        protected override void ProcessRecord()
-        {
-            byte[] bytes = Array.ConvertAll(subnetMask.Split('.'), new Converter<string, byte>(byte.Parse));
-
-            if (System.BitConverter.IsLittleEndian)
-            {
-                Array.Reverse(bytes);
-            }
-
-            uint subnetValue = System.BitConverter.ToUInt32(bytes, 0);
-            int prefixLength = 0;
-
-            while (subnetValue > 0)
-            {
-                subnetValue <<= 1;
-                prefixLength++;
-
-            }
-
-            WriteObject(prefixLength);
-        }
-    }
-
-    [Cmdlet(VerbsData.Convert, "PrefixLength")]
-    public class ConvertPrefixLength : Cmdlet
-    {
-
-        [Parameter(Position = 0, Mandatory = true)]
+        [Parameter()]
         [ValidatePattern(Regex.PrefixLength)]
         public string PrefixLength
         {
@@ -247,16 +257,48 @@ namespace IPUtils
 
         protected override void ProcessRecord()
         {
-            byte[] subnetBytes = System.BitConverter.GetBytes(UInt32.MaxValue << (32 - int.Parse(prefixLength)));
 
-            if (System.BitConverter.IsLittleEndian)
+            if(SubnetMask != "0.0.0.0")
             {
-                Array.Reverse(subnetBytes);
+                byte[] bytes = Array.ConvertAll(SubnetMask.Split('.'), new Converter<string, byte>(byte.Parse));
+
+                if (System.BitConverter.IsLittleEndian) Array.Reverse(bytes);
+
+                uint subnetValue = System.BitConverter.ToUInt32(bytes, 0);
+                int prefixLength = 0;
+
+                while (subnetValue > 0)
+                {
+                    subnetValue <<= 1;
+                    prefixLength++;
+
+                }
+
+                WriteObject(prefixLength);
             }
 
-            string[] subnetMask = Array.ConvertAll(subnetBytes, new Converter<byte, string>(b => b.ToString()));
+            else if (PrefixLength != "0")
+            {
+                byte[] subnetBytes = System.BitConverter.GetBytes(UInt32.MaxValue << (32 - int.Parse(PrefixLength)));
 
-            WriteObject(String.Join(".", subnetMask));
+                if (System.BitConverter.IsLittleEndian) Array.Reverse(subnetBytes);
+
+                string[] subnetMask = Array.ConvertAll(subnetBytes, new Converter<byte, string>(b => b.ToString()));
+
+                WriteObject(String.Join(".", subnetMask));
+            }
+
+            else
+            {
+                ErrorRecord err = new ErrorRecord(
+                    new Exception("Please use either the -SubnetMask or -PrefixLength parameters"), 
+                    "Invalid Argument", 
+                    ErrorCategory.InvalidArgument, 
+                    subnetMask
+                );
+
+                ThrowTerminatingError(err);
+            }
         }
     }
 }
