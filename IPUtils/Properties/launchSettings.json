@@ -3,18 +3,6 @@
     "IPUtils": {
       "commandName": "Project"
     },
-    "New-IPRangeThread": {
-      "commandName": "Executable",
-      "executablePath": "%SystemRoot%\\system32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      "commandLineArgs": "-NoExit -Command \"Import-Module '.\\IPUtils\\bin\\Release\\netstandard2.0\\IPUtils.dll'; New-IPRange 192.168.0.0/16 1;\"",
-      "workingDirectory": "C:\\Users\\leahv\\source\\repos\\IPUtils"
-    },
-    "New-IPRange": {
-      "commandName": "Executable",
-      "executablePath": "%SystemRoot%\\system32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      "commandLineArgs": "-NoExit -Command \"Import-Module '.\\IPUtils\\bin\\Release\\netstandard2.0\\IPUtils.dll'; New-IPRange 192.168.0.0/16;\"",
-      "workingDirectory": "C:\\Users\\leahv\\source\\repos\\IPUtils"
-    },
     "PS_5.1": {
       "commandName": "Executable",
       "executablePath": "%SystemRoot%\\system32\\WindowsPowerShell\\v1.0\\powershell.exe",
