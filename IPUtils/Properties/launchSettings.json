@@ -3,11 +3,12 @@
     "IPUtils": {
       "commandName": "Project"
     },
-    "PS_5.1": {
+    "PS_5.1 Debug": {
       "commandName": "Executable",
       "executablePath": "%SystemRoot%\\system32\\WindowsPowerShell\\v1.0\\powershell.exe",
-      "commandLineArgs": "-NoExit -Command \"Import-Module '.\\IPUtils\\bin\\Release\\netstandard2.0\\IPUtils.dll';\"",
-      "workingDirectory": "C:\\Users\\leahv\\source\\repos\\IPUtils"
+      "commandLineArgs": "-NoExit -Command \"Import-Module '.\\bin\\Debug\\netstandard2.0\\IPUtils.dll';\"",
+      "workingDirectory": "C:\\Users\\leahv\\source\\repos\\Chevlanae\\PS-IPUtils\\IPUtils",
+      "nativeDebugging": true
     }
   }
 }

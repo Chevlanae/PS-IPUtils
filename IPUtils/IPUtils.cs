@@ -3,38 +3,96 @@ using System.Threading;
 using System.Linq;
 using System.Management.Automation;
 using System.Text.RegularExpressions;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace IPUtils
 {
+
+    public class IPArrayShared : IEnumerable
+    {
+        private string[] _Array;
+
+        public IPArrayShared(long size)
+        {
+            _Array = new string[size];
+        }
+        
+        public string this[long i]
+        {
+            get
+            {
+                lock (_Array)
+                {
+                    return _Array[i];
+                }
+            }
+            set
+            {
+                lock (_Array)
+                {
+                    _Array[i] = value;
+                }
+            }
+        }
+
+        public int Length
+        {
+            get
+            {
+                lock (_Array)
+                {
+                    return _Array.Length;
+                }
+            }
+        }
+
+        public IEnumerator GetEnumerator()
+        {
+            lock (_Array)
+            {
+                return _Array.GetEnumerator();
+            }
+        }
+
+        public List<string> ToList()
+        {
+            return new List<string>(_Array);
+        }
+    }
+
     //Instance class for generating a block of 256 IP addresses
     //Used for multithreading in NewIPRange
     public class IPBlock
     {
         //Array of length 4, represents the block's largest possible IP address.
-        public int[] TopEnd;
+        private int[] TopEnd;
 
         //Array of length 4, represents the block's smallest possible IP address.
-        public int[] LowEnd;
+        private int[] LowEnd;
 
-        public string[] IPs;
+        private IPArrayShared IPs;
 
-        public IPBlock(int[] topE, int[] lowE)
+        private long IndexOffset;
+
+        public IPBlock(int[] topE, int[] lowE, IPArrayShared ipArray, long indexOffset)
         {
             TopEnd = topE;
             LowEnd = lowE;
-            IPs = new string[topE[3] + 1];
+            IPs = ipArray;
+            IndexOffset = indexOffset;
         }
 
         public void Gen()
         {
-            foreach (int b4 in Enumerable.Range(0, TopEnd[3] + 1))
+            foreach (int b4 in Enumerable.Range(1, TopEnd[3]))
             {
-                IPs[b4] = (LowEnd[0] + TopEnd[0]) + "." + (LowEnd[1] + TopEnd[1]) + "." + (LowEnd[2] + TopEnd[2]) + "." + (LowEnd[3] + b4);
+                IPs[IndexOffset + (b4 - 1)] = (LowEnd[0] + TopEnd[0]) + "." + (LowEnd[1] + TopEnd[1]) + "." + (LowEnd[2] + TopEnd[2]) + "." + (LowEnd[3] + b4);
             }
         }
     }
 
-    public class IPRegex
+    public static class IPRegex
     {
         public static class Patterns
         {
@@ -46,22 +104,12 @@ namespace IPUtils
             public const string SubnetMask = "(255\\.255\\.255\\." + SubnetByte + ")|(255\\.255\\." + SubnetByte + "\\.0)|(255\\." + SubnetByte + "\\.0\\.0)|(" + SubnetByte + "\\.0\\.0\\.0)";
         }
 
-        public Regex Byte;
-        public Regex IPAddress;
-        public Regex PrefixLength;
-        public Regex CIDR;
-        public Regex SubnetByte;
-        public Regex SubnetMask;
-
-        public IPRegex()
-        {
-            Byte = new Regex(Patterns.Byte);
-            IPAddress = new Regex(Patterns.IPAddress);
-            PrefixLength = new Regex(Patterns.PrefixLength);
-            CIDR = new Regex(Patterns.CIDR);
-            SubnetByte = new Regex(Patterns.SubnetByte);
-            SubnetMask = new Regex(Patterns.SubnetMask);
-        }
+        static public Regex Byte = new Regex(Patterns.Byte);
+        static public Regex IPAddress = new Regex(Patterns.IPAddress);
+        static public Regex PrefixLength = new Regex(Patterns.PrefixLength);
+        static public Regex CIDR = new Regex(Patterns.CIDR);
+        static public Regex SubnetByte = new Regex(Patterns.SubnetByte);
+        static public Regex SubnetMask = new Regex(Patterns.SubnetMask);
     }
 
     [Cmdlet(VerbsCommon.New, "IPRange")]
@@ -111,11 +159,11 @@ namespace IPUtils
 
             //Calculate subnet mask from prefixLength
             //https://learn.microsoft.com/en-us/dotnet/api/system.bitconverter.getbytes?view=netstandard-2.0
-            byte[] subnetMask = System.BitConverter.GetBytes(UInt32.MaxValue << (32 - prefixLength));
+            byte[] subnetMask = BitConverter.GetBytes(UInt32.MaxValue << (32 - prefixLength));
 
             //Reverse array if system is little endian (not tested on big endian machines, I don't even know where to find those).
             //https://learn.microsoft.com/en-us/dotnet/api/system.bitconverter.islittleendian?view=netstandard-2.0
-            if (System.BitConverter.IsLittleEndian) Array.Reverse(subnetMask);
+            if (BitConverter.IsLittleEndian) Array.Reverse(subnetMask);
 
             //Calculate wildcardMask
             //https://en.wikipedia.org/wiki/Wildcard_mask
@@ -138,24 +186,24 @@ namespace IPUtils
             //Timestamp used to calculate the total time of execution
             DateTime timestamp = DateTime.Now;
 
+            //Calculate total amount of IP blocks needed
+            //Always 1 block if total amount of IPs is less than 255
+            long ipCount = 1;
+            ipCount *= wildcardMask[0] + 1;
+            ipCount *= wildcardMask[1] + 1;
+            ipCount *= wildcardMask[2] + 1;
+            ipCount *= wildcardMask[3] == 0 ? 1 : wildcardMask[3];
+
             //Generate IPs on multiple threads
-            //Blocks of 256 individual IP addresses will be assigned an individual thread
-            //Once a thread is finished with it's block, the IP addresses are written sequentially.
+            //Blocks of 255 individual IP addresses will be assigned an individual thread
+            //IP addresses are written sequentially.
             if (threading)
             {
+                List<Thread> threads = new List<Thread>();
+                IPArrayShared IPs = new IPArrayShared(ipCount);
 
-                //Calculate total amount of IP blocks needed
-                //Always 1 block if total amount of IPs is less than 255
-                int blockCount = 1;
-                blockCount *= wildcardMask[0] + 1;
-                blockCount *= wildcardMask[1] + 1;
-                blockCount *= wildcardMask[2] + 1;
-
-                //Init block array with the size of blockCount
-                Tuple<IPBlock, Thread>[]  IPBlocks = new Tuple<IPBlock, Thread>[blockCount];
-
-                //IPBlocks index
-                int i = 0;
+                //IPBlock index offset
+                long offset = 0;
 
                 //Calculate IP bytes and start threads
                 //Format: 255.255.255.255 => b1.b2.b3.b4
@@ -173,43 +221,22 @@ namespace IPUtils
                             topEnd[3] = wildcardMask[3];
 
                             //Set new block
-                            IPBlock ipBlock = new IPBlock(topEnd, lowEnd);
-                            
-                            //Pass block's generator method to thread
-                            Thread threadCaller = new Thread(new ThreadStart(ipBlock.Gen), 0);
+                            IPBlock ipBlock = new IPBlock(topEnd, lowEnd, IPs, offset);
 
-                            //Assign block and thread to block array
-                            IPBlocks[i] = new Tuple<IPBlock, Thread>(ipBlock, threadCaller);
+                            //queue thread
+                            Thread thread = new Thread(ipBlock.Gen);
+                            thread.Start();
+                            threads.Add(thread);
 
-                            //Increment index
-                            i++;
+                            //Increment offset
+                            offset += wildcardMask[3];
                         }
                     }
                 }
 
-                foreach (Tuple<IPBlock, Thread> block in IPBlocks) block.Item2.Start();
+                WriteObject(IPs);
 
-                //Wait for threads and write the received data
-                foreach (Tuple<IPBlock, Thread> block in IPBlocks)
-                {
-                    //Wait
-                    block.Item2.Join();
-
-                    //Write
-                    foreach (string ip in block.Item1.IPs)
-                    {
-                        WriteObject(ip);
-                    }
-                }
-
-                //Calculate timespan of execution and write to console
-                if(time)
-                {
-                    TimeSpan timespan = DateTime.Now - timestamp;
-
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine((blockCount * (wildcardMask[3] + 1)) + " IP addresses generated in " + String.Format("{0:0.00}", timespan.TotalSeconds) + " seconds");
-                }
+                while (threads.Any((t) => t.IsAlive)) Thread.Sleep(10);
             }
 
             //Single thread
@@ -221,25 +248,21 @@ namespace IPUtils
                     {
                         foreach (int b3 in Enumerable.Range(0, wildcardMask[2] + 1))
                         {
-                            foreach (int b4 in Enumerable.Range(0, wildcardMask[3] + 1))
+                            foreach (int b4 in Enumerable.Range(1, wildcardMask[3]))
                             {
                                 WriteObject((lowEnd[0] + b1) + "." + (lowEnd[1] + b2) + "." + (lowEnd[2] + b3) + "." + (lowEnd[3] + b4));
                             }
                         }
                     }
                 }
+            }
 
-                //Calculate timespan of execution and write to console
-                if (time)
-                {
-                    TimeSpan timespan = DateTime.Now - timestamp;
+            //Calculate timespan of execution and write to console
+            if (time)
+            {
+                TimeSpan timespan = DateTime.Now - timestamp;
 
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine(
-                        (wildcardMask[0] + 1) * (wildcardMask[1] + 1) * (wildcardMask[2] + 1) * (wildcardMask[3] + 1) + 
-                        " IP addresses generated in " + String.Format("{0:0.00}", timespan.TotalSeconds) + " seconds"
-                    );
-                }
+                Console.WriteLine(ipCount + " IP addresses generated in " + String.Format("{0:0.00}", timespan.TotalSeconds) + " seconds");
             }
         }
 
@@ -260,14 +283,13 @@ namespace IPUtils
         {
             try 
             {
-                IPRegex reg = new IPRegex();
-                if (reg.SubnetMask.IsMatch(Input))
+                if (IPRegex.SubnetMask.IsMatch(Input))
                 {
                     byte[] bytes = Array.ConvertAll(Input.Split('.'), new Converter<string, byte>(byte.Parse));
 
-                    if (System.BitConverter.IsLittleEndian) Array.Reverse(bytes);
+                    if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
 
-                    uint subnetValue = System.BitConverter.ToUInt32(bytes, 0);
+                    uint subnetValue = BitConverter.ToUInt32(bytes, 0);
                     int prefixLength = 0;
 
                     while (subnetValue > 0)
@@ -279,24 +301,24 @@ namespace IPUtils
                     WriteObject(prefixLength);
                 }
 
-                else if (reg.PrefixLength.IsMatch(Input))
+                else if (IPRegex.PrefixLength.IsMatch(Input))
                 {
-                    byte[] SubnetBytes = System.BitConverter.GetBytes(UInt32.MaxValue << (32 - int.Parse(Input)));
+                    byte[] SubnetBytes = BitConverter.GetBytes(UInt32.MaxValue << (32 - int.Parse(Input)));
 
-                    if (System.BitConverter.IsLittleEndian) Array.Reverse(SubnetBytes);
+                    if (BitConverter.IsLittleEndian) Array.Reverse(SubnetBytes);
 
                     string[] subnetMask = Array.ConvertAll(SubnetBytes, new Converter<byte, string>(b => b.ToString()));
 
                     WriteObject(String.Join(".", subnetMask));
                 }
+                else throw new FormatException("Invalid Input. Input must be either a valid subnet mask (ex. 255.255.255.0) or a prefix length between 0-32.");
             }
 
-            catch(FormatException e)
-
+            catch(FormatException ex)
             {
                 ErrorRecord err = new ErrorRecord(
-                    new Exception("Invalid Input. Input must be either a valid subnet mask or a prefix length between 0-32."),
-                    "Invalid Argument",
+                    ex,
+                    "1",
                     ErrorCategory.InvalidArgument,
                     Input
                 );
